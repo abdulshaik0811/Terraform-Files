@@ -1,0 +1,147 @@
+provider "aws" {
+  region = "us-east-1"
+}
+
+# Terraform configuration file for creating a VPC in AWS
+resource "aws_vpc" "MyVPC" {
+  tags = {
+    Name = "Terraform-VPC"
+  }
+    cidr_block = "10.0.0.0/16"
+    enable_dns_hostnames = true
+}
+
+#Subnet creation
+resource "aws_subnet" "MySubnet1" {
+  vpc_id            = aws_vpc.MyVPC.id
+  cidr_block        = "10.0.0.0/24"
+  availability_zone = "us-east-1a"
+
+  tags = {
+    Name = "Terraform-Subnet"
+  }
+}
+
+#Another Subnet creation
+resource "aws_subnet" "MySubnet2" {
+  vpc_id            = aws_vpc.MyVPC.id
+  cidr_block        = "10.0.1.0/24"
+  availability_zone = "us-east-1b"
+
+  tags = {
+    Name = "Terraform-Subnet-2"
+  }
+}
+
+#Internet Gateway creation
+resource "aws_internet_gateway" "MyIGW" {
+  vpc_id = aws_vpc.MyVPC.id
+
+  tags = {
+    Name = "Terraform-IGW"
+  }
+}
+
+#Route Table creation
+resource "aws_route_table" "MyRouteTable" {
+  vpc_id = aws_vpc.MyVPC.id
+
+  tags = {
+    Name = "Terraform-Route-Table"
+  }
+}
+
+#subnet association with route table
+resource "aws_route_table_association" "a" {
+  subnet_id      = aws_subnet.MySubnet1.id
+  route_table_id = aws_route_table.MyRouteTable.id
+}
+
+resource "aws_route_table_association" "b" {
+  subnet_id      = aws_subnet.MySubnet2.id
+  route_table_id = aws_route_table.MyRouteTable.id
+}
+
+#Route creation to IGW
+resource "aws_route" "MyRoute" {
+  route_table_id         = aws_route_table.MyRouteTable.id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = aws_internet_gateway.MyIGW.id
+}
+
+#Security_Group
+resource "aws_security_group" "MY-SG" {
+  name = "terraform-security-group"
+    description = "Security group for Terraform example"
+    vpc_id = aws_vpc.MyVPC.id
+
+    ingress {
+        from_port   = 22
+        to_port     = 22
+        protocol    = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    ingress {
+        from_port   = 80
+        to_port     = 80
+        protocol    = "tcp"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    egress {
+        from_port   = 0
+        to_port     = 0
+        protocol    = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+}
+
+#launch template
+resource "aws_launch_template" "MY-LT" {
+  name        = "terraform-launch-template"
+  description = "Launch template for Terraform example"
+    image_id    = "ami-0cae6d6fe6048ca2c" # Amazon Linux 2 AMI
+    instance_type = "t3.micro"
+    key_name = "Gkp"
+    network_interfaces {
+        associate_public_ip_address = true
+        security_groups             = [aws_security_group.MY-SG.id]
+    }
+}
+
+#load balancer
+resource "aws_elb" "MY-LB" {
+  name               = "terraform-load-balancer"
+  subnets            = [aws_subnet.MySubnet1.id, aws_subnet.MySubnet2.id]
+  security_groups    = [aws_security_group.MY-SG.id]
+  internal           = false
+
+  listener {
+    instance_port     = 80
+    instance_protocol = "http"
+    lb_port           = 80
+    lb_protocol       = "http"
+  }
+
+    tags = {
+        Name = "Terraform-LB"
+    }
+}
+
+#Auto Scaling Group
+resource "aws_autoscaling_group" "MY-ASG" {
+  desired_capacity     = 2
+  max_size             = 4
+  min_size             = 1
+  launch_template {
+    id      = aws_launch_template.MY-LT.id
+  }
+
+    vpc_zone_identifier = [aws_subnet.MySubnet1.id, aws_subnet.MySubnet2.id]
+    tag {
+        key                 = "Name"
+        value               = "Terraform-ASG-Instance"
+        propagate_at_launch = true
+    }
+}
